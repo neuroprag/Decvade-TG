@@ -1,9 +1,6 @@
 package com.decvade.tg
 
 import android.app.Activity
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -11,6 +8,8 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.text.InputType
+import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
 import android.widget.Button
@@ -18,29 +17,18 @@ import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ListView
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
-import java.net.HttpURLConnection
-import java.net.URL
-import java.util.Random
 
 class MainActivity : Activity() {
 
     companion object {
-        const val FREE = 0
-        const val TAKEN = 1
-        const val LIMIT = 2
-        const val ERROR = 3
         private val VALID = Regex("^[a-zA-Z][a-zA-Z0-9_]{3,30}[a-zA-Z0-9]$")
         private val PREFIX_OK = Regex("^[a-zA-Z][a-zA-Z0-9_]*$")
     }
 
-    private class Res(val kind: Int, val waitSec: Int = 0)
-
     private val ui = Handler(Looper.getMainLooper())
-    @Volatile private var running = false
-    private val rnd = Random()
-    private val seen = HashSet<String>()
     private val found = ArrayList<String>()
 
     private lateinit var adapter: ArrayAdapter<String>
@@ -52,17 +40,21 @@ class MainActivity : Activity() {
     private lateinit var lenInput: EditText
     private lateinit var lettersOnly: CheckBox
     private lateinit var dictBox: CheckBox
-    private val doneWords = HashSet<String>()
+    private lateinit var checkButton: Button
+    @Volatile private var checkingUsername = false
+
+    private lateinit var appConfig: AppConfig
+    private val domainChecker = DomainChecker()
+    private lateinit var scorer: UsernameScorer
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
-    private fun label(t: String, size: Float, bold: Boolean = false): TextView {
+    private fun label(t: String, size: Float, bold: Boolean = false, color: Int = Color.WHITE): TextView {
         val v = TextView(this)
         v.text = t
         v.textSize = size
-        v.setTextColor(Color.WHITE)
+        v.setTextColor(color)
         if (bold) v.setTypeface(v.typeface, Typeface.BOLD)
-        v.setPadding(0, dp(8), 0, dp(4))
         return v
     }
 
@@ -82,123 +74,227 @@ class MainActivity : Activity() {
     private fun input(h: String): EditText {
         val v = EditText(this)
         v.hint = h
-        v.setHintTextColor(Color.GRAY)
-        v.setTextColor(Color.WHITE)
+        v.setHintTextColor(Color.parseColor("#8994A6"))
+        v.setTextColor(Color.parseColor("#F2F5F9"))
         v.setSingleLine(true)
-        v.background = rounded(0xFF1A1A22.toInt(), 14)
-        v.setPadding(dp(16), dp(14), dp(16), dp(14))
-        v.layoutParams = lp()
+        v.textSize = 15f
+        v.background = rounded(Color.parseColor("#171A1F"), 12)
+        v.setPadding(dp(14), dp(10), dp(14), dp(10))
+        v.layoutParams = lp(8)
         return v
     }
 
-    private fun button(t: String): Button {
+    private fun button(t: String, primary: Boolean = true): Button {
         val v = Button(this)
         v.text = t
         v.isAllCaps = false
-        v.textSize = 16f
-        v.setTextColor(Color.BLACK)
-        v.background = rounded(Color.WHITE, 14)
-        v.layoutParams = lp(10)
+        v.textSize = 15f
+        v.setTextColor(if (primary) Color.parseColor("#101820") else Color.WHITE)
+        v.background = rounded(
+            if (primary) Color.parseColor("#76A9FF") else Color.parseColor("#303744"),
+            12
+        )
+        v.layoutParams = lp(8)
         return v
+    }
+
+    private fun card(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        background = rounded(Color.parseColor("#202630"), 18)
+        setPadding(dp(16), dp(14), dp(16), dp(16))
     }
 
     private fun toast(t: String) = Toast.makeText(this, t, Toast.LENGTH_SHORT).show()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.statusBarColor = Color.BLACK
-        window.navigationBarColor = Color.BLACK
+        appConfig = UsernameConfigLoader.load(this)
+        scorer = UsernameScorer(appConfig.scoring)
+
+        window.statusBarColor = Color.parseColor("#171A1F")
+        window.navigationBarColor = Color.parseColor("#171A1F")
 
         val root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
-        root.setBackgroundColor(Color.BLACK)
-        root.setPadding(dp(16), dp(24), dp(16), dp(16))
+        root.setBackgroundColor(Color.parseColor("#171A1F"))
+        root.setPadding(dp(18), dp(18), dp(18), dp(12))
 
-        root.addView(label("Decvade - TG", 28f, true))
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 0, 0, dp(8))
+        }
+        header.addView(label("Decvade", 28f, true))
+        header.addView(
+            label(
+                "Поиск и проверка Telegram-юзернеймов",
+                14f,
+                color = Color.parseColor("#A5B0C2")
+            ).apply { setPadding(0, dp(3), 0, 0) }
+        )
+        root.addView(header)
 
-        // Проверка одного ника
-        root.addView(label("Проверить ник", 16f, true))
+        val controls = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val checkCard = card()
+        checkCard.addView(label("Проверить ник", 18f, true))
+        checkCard.addView(
+            label(
+                "Публичная проверка в Telegram и Fragment",
+                13f,
+                color = Color.parseColor("#A5B0C2")
+            ).apply { setPadding(0, dp(4), 0, 0) }
+        )
         nameInput = input("@username")
-        root.addView(nameInput)
-        val singleBtn = button("Проверить")
-        root.addView(singleBtn)
+        checkCard.addView(nameInput)
+        checkButton = button("Проверить в Telegram и Fragment")
+        checkCard.addView(checkButton)
         singleView = label("", 14f)
-        root.addView(singleView)
+        singleView.setPadding(0, dp(10), 0, 0)
+        checkCard.addView(singleView)
+        controls.addView(checkCard, lp(8))
 
-        // Автопоиск
-        root.addView(label("Автопоиск свободных", 16f, true))
+        val generatorCard = card()
+        generatorCard.addView(label("Сгенерировать варианты", 18f, true))
+        generatorCard.addView(
+            label(
+                "Подбор работает локально. Проверка сайтов — только по вашему нажатию.",
+                13f,
+                color = Color.parseColor("#A5B0C2")
+            ).apply { setPadding(0, dp(4), 0, 0) }
+        )
         prefixInput = input("Начало ника (необязательно)")
-        root.addView(prefixInput)
+        generatorCard.addView(prefixInput)
         lenInput = input("Длина (необязательно, 5-32)")
         lenInput.inputType = InputType.TYPE_CLASS_NUMBER
-        root.addView(lenInput)
+        generatorCard.addView(lenInput)
         lettersOnly = CheckBox(this)
         lettersOnly.text = "Только буквы"
-        lettersOnly.setTextColor(Color.WHITE)
+        lettersOnly.setTextColor(Color.parseColor("#F2F5F9"))
         lettersOnly.isChecked = true
-        root.addView(lettersOnly)
+        generatorCard.addView(lettersOnly)
         dictBox = CheckBox(this)
         dictBox.text = "По словам из словаря (words.txt)"
-        dictBox.setTextColor(Color.WHITE)
+        dictBox.setTextColor(Color.parseColor("#F2F5F9"))
         dictBox.isChecked = true
-        root.addView(dictBox)
-        startBtn = button("Старт")
-        root.addView(startBtn)
+        generatorCard.addView(dictBox)
+        startBtn = button("Найти варианты")
+        generatorCard.addView(startBtn)
+        controls.addView(generatorCard, lp(12))
+
+        val controlsScroll = ScrollView(this).apply {
+            isFillViewport = true
+            clipToPadding = false
+            setPadding(0, 0, 0, dp(8))
+            addView(controls)
+        }
+        root.addView(
+            controlsScroll,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.15f)
+        )
+
         statusView = label("", 14f)
+        statusView.setTextColor(Color.parseColor("#A5B0C2"))
+        statusView.setPadding(0, dp(6), 0, dp(6))
         root.addView(statusView)
 
-        root.addView(label("Свободные (нажми, чтобы скопировать)", 14f))
+        val resultsHeader = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(4), 0, dp(8))
+        }
+        resultsHeader.addView(label("Варианты", 17f, true))
+        resultsHeader.addView(
+            label("  ·  нажмите, чтобы проверить", 13f, color = Color.parseColor("#A5B0C2"))
+        )
+        root.addView(resultsHeader)
+
         val list = ListView(this)
-        adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, found)
+        adapter = object : ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, found) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                return (super.getView(position, convertView, parent) as TextView).apply {
+                    setTextColor(Color.parseColor("#F2F5F9"))
+                    textSize = 16f
+                    setPadding(dp(12), dp(12), dp(12), dp(12))
+                    setBackgroundColor(Color.TRANSPARENT)
+                }
+            }
+        }
         list.adapter = adapter
-        list.background = rounded(0xFF14141A.toInt(), 16)
-        list.divider = null
-        list.setPadding(dp(8), dp(8), dp(8), dp(8))
+        list.background = rounded(Color.parseColor("#202630"), 16)
+        list.divider = android.graphics.drawable.ColorDrawable(Color.parseColor("#303744"))
+        list.dividerHeight = dp(1)
+        list.setPadding(dp(8), dp(4), dp(8), dp(4))
+        list.isVerticalScrollBarEnabled = true
         list.setOnItemClickListener { _, _, pos, _ ->
-            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            cm.setPrimaryClip(ClipData.newPlainText("username", "@" + found[pos]))
-            toast("Скопировано: @" + found[pos])
+            checkUsername(found[pos])
         }
         root.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
         setContentView(root)
 
-        singleBtn.setOnClickListener {
-            val n = nameInput.text.toString().trim().removePrefix("@")
-            if (!isValid(n)) {
-                singleView.text = "Неверный ник: 5-32 символа, латиница, цифры и _, начинается с буквы"
-                return@setOnClickListener
-            }
-            singleView.text = "Проверяю..."
-            Thread {
-                val r = check(n)
-                val msg = when (r.kind) {
-                    FREE -> "@$n похоже свободен. Но Telegram может не дать его занять (зарезервирован или на Fragment)."
-                    TAKEN -> "@$n занят"
-                    LIMIT -> "Telegram просит подождать, попробуй позже"
-                    else -> "Не удалось проверить, смотри интернет"
-                }
-                ui.post { singleView.text = msg }
-            }.start()
-        }
+        checkButton.setOnClickListener { checkUsername(nameInput.text.toString().trim().removePrefix("@")) }
 
-        startBtn.setOnClickListener {
-            if (running) {
-                running = false
-            } else {
-                startSearch()
-            }
-        }
-    }
-
-    override fun onDestroy() {
-        running = false
-        super.onDestroy()
+        startBtn.setOnClickListener { generateSuggestions() }
     }
 
     private fun isValid(n: String) = VALID.matches(n) && !n.contains("__")
 
-    private fun startSearch() {
+    private fun checkUsername(name: String) {
+        val normalized = name.trim().removePrefix("@")
+        nameInput.setText(normalized)
+        if (!isValid(normalized)) {
+            singleView.text = "Ник должен содержать 5–32 латинских символа, цифры или _."
+            return
+        }
+        if (checkingUsername) {
+            toast("Дождитесь завершения текущей проверки")
+            return
+        }
+
+        val domains = appConfig.domains.filter { it.enabled }
+        if (domains.isEmpty()) {
+            singleView.text = "Нет включённых сервисов для проверки."
+            return
+        }
+
+        checkingUsername = true
+        checkButton.isEnabled = false
+        checkButton.text = "Проверяю…"
+        singleView.text = "Проверка @$normalized…"
+
+        Thread {
+            val results = domains.map { domainChecker.check(normalized, it) }
+            val message = buildString {
+                results.forEach { result ->
+                    val serviceName = when (result.domain) {
+                        "telegram" -> "Telegram"
+                        "fragment" -> "Fragment"
+                        else -> result.domain
+                    }
+                    append("$serviceName: ")
+                    when {
+                        result.statusCode == 429 -> {
+                            append("лимит запросов")
+                            if (result.waitSeconds > 0) append(", повторите через ${result.waitSeconds} с")
+                        }
+                        result.error != null -> append("не удалось проверить (${result.error})")
+                        result.available == true -> append("страница профиля не найдена, возможно свободен")
+                        result.available == false -> append("страница найдена, возможно занят")
+                        else -> append("сервис не дал однозначного результата")
+                    }
+                    append('\n')
+                }
+                append("Предварительный результат: сайты не гарантируют возможность занять ник.")
+            }
+            ui.post {
+                checkingUsername = false
+                checkButton.isEnabled = true
+                checkButton.text = "Проверить в Telegram и Fragment"
+                singleView.text = message
+            }
+        }.start()
+    }
+
+    private fun generateSuggestions() {
         val prefix = prefixInput.text.toString().trim().removePrefix("@")
         if (prefix.length >= 32) {
             toast("Начало слишком длинное")
@@ -208,144 +304,51 @@ class MainActivity : Activity() {
             toast("В начале только латиница, цифры и _, первая буква")
             return
         }
-        val typed = lenInput.text.toString().trim().toIntOrNull()
-        val len = if (typed == null) 0 else typed.coerceIn(5, 32)
+
+        val lengthText = lenInput.text.toString().trim()
+        val requestedLength = if (lengthText.isEmpty()) {
+            null
+        } else {
+            lengthText.toIntOrNull()?.takeIf { it in appConfig.search.minLength..appConfig.search.maxLength }
+        }
+        if (lengthText.isNotEmpty() && requestedLength == null) {
+            toast("Длина должна быть от ${appConfig.search.minLength} до ${appConfig.search.maxLength}")
+            return
+        }
         val letters = lettersOnly.isChecked
-        var dict: List<String>? = null
-        if (dictBox.isChecked) {
-            val all = try {
-                assets.open("words.txt").bufferedReader().readLines()
-            } catch (e: Exception) {
-                emptyList<String>()
-            }
-            val p = prefix.lowercase()
-            val list = all.map { it.trim().lowercase() }
-                .filter { isValid(it) && it.startsWith(p) && !doneWords.contains(it) }
-                .filter { len == 0 || it.length == len }
-                .filter { !letters || it.all { c -> c.isLetter() } }
-                .distinct().shuffled()
-            if (list.isEmpty()) {
-                toast("Подходящих слов не найдено")
-                return
-            }
-            dict = list
-        }
-        val d = dict
-        running = true
-        startBtn.text = "Стоп"
-        Thread { runSearch(prefix, len, letters, d) }.start()
-    }
 
-    private fun setStatus(t: String) {
-        ui.post { statusView.text = t }
-    }
-
-    private fun sleepMs(ms: Long) {
         try {
-            Thread.sleep(ms)
-        } catch (e: InterruptedException) {
-        }
-    }
-
-    private fun runSearch(prefix: String, len: Int, letters: Boolean, dict: List<String>?) {
-        val queue = ArrayDeque<String>(dict ?: emptyList())
-        var checked = 0
-        var freeCount = 0
-        var fails = 0
-        var pause = 800L
-
-        while (running) {
-            val name: String? = if (dict != null) {
-                queue.removeFirstOrNull()
+            val dictionary = if (dictBox.isChecked) {
+                UsernameConfigLoader.loadDictionary(this, appConfig.generator)
             } else {
-                val l = maxOf(if (len == 0) 5 + rnd.nextInt(4) else len, prefix.length + 1, 5)
-                candidate(prefix, minOf(l, 32), letters)
+                emptyList()
             }
-            if (name == null) {
-                setStatus("Слова или варианты закончились. Проверено: $checked, свободных: $freeCount")
-                break
-            }
-            setStatus("Проверено: $checked, свободных: $freeCount\nСейчас: @$name")
-            val r = check(name)
+            val candidates = UsernameGenerator(appConfig.generator, dictionary)
+                .generateCandidates(
+                    prefix = prefix,
+                    maxCount = 200,
+                    minLength = requestedLength ?: appConfig.search.minLength,
+                    maxLength = requestedLength ?: appConfig.search.maxLength,
+                    lettersOnly = letters,
+                    allowDigits = appConfig.search.allowDigits,
+                    allowUnderscore = appConfig.search.allowUnderscore
+                )
+                .filter(::isValid)
+            val ranked = candidates
+                .distinct()
+                .sortedByDescending(scorer::score)
 
-            if (r.kind == LIMIT || r.kind == ERROR) {
-                // этот ник не проверили, вернём его в очередь
-                if (dict != null) queue.addFirst(name) else seen.remove(name)
-                fails++
-                if (r.kind == LIMIT) pause = minOf(pause + 1000L, 10000L)
-                val wait = if (r.waitSec > 0) r.waitSec else minOf(300, 10 * (1 shl minOf(fails, 5)))
-                var left = wait
-                while (running && left > 0) {
-                    setStatus("Пауза (лимит или нет сети): $left с\nПроверено: $checked, свободных: $freeCount")
-                    sleepMs(1000)
-                    left--
-                }
-                continue
+            found.clear()
+            found.addAll(ranked)
+            adapter.notifyDataSetChanged()
+            statusView.text = if (found.isEmpty()) {
+                "Подходящих вариантов не найдено"
+            } else {
+                "Сгенерировано вариантов: ${found.size}. Выберите ник и запустите ручную проверку."
             }
-
-            fails = 0
-            checked++
-            if (dict != null) doneWords.add(name)
-            if (r.kind == FREE) {
-                freeCount++
-                ui.post {
-                    found.add(0, name)
-                    adapter.notifyDataSetChanged()
-                }
-            }
-            pause = maxOf(800L, pause - 100L)
-            sleepMs(pause)
-        }
-
-        running = false
-        ui.post {
-            startBtn.text = "Старт"
-            if (statusView.text.startsWith("Проверено") || statusView.text.startsWith("Пауза")) {
-                statusView.text = "Остановлено. Проверено: $checked, свободных: $freeCount"
-            }
-        }
-    }
-
-    private fun candidate(prefix: String, len: Int, letters: Boolean): String? {
-        val abc = "abcdefghijklmnopqrstuvwxyz"
-        val full = if (letters) abc else abc + "0123456789_"
-        repeat(300) {
-            val sb = StringBuilder(prefix)
-            while (sb.length < len) {
-                val isLast = sb.length == len - 1
-                var ch = 'a'
-                do {
-                    val pool = if (sb.isEmpty()) abc else full
-                    ch = pool[rnd.nextInt(pool.length)]
-                } while (ch == '_' && (isLast || sb.last() == '_'))
-                sb.append(ch)
-            }
-            val s = sb.toString()
-            if (isValid(s) && seen.add(s)) return s
-        }
-        return null
-    }
-
-    private fun check(name: String): Res {
-        var c: HttpURLConnection? = null
-        try {
-            c = URL("https://t.me/$name").openConnection() as HttpURLConnection
-            c.connectTimeout = 10000
-            c.readTimeout = 10000
-            c.instanceFollowRedirects = true
-            c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36")
-            val code = c.responseCode
-            if (code == 429) {
-                val w = c.getHeaderField("Retry-After")?.trim()?.toIntOrNull() ?: 0
-                return Res(LIMIT, w)
-            }
-            if (code != 200) return Res(ERROR)
-            val html = c.inputStream.bufferedReader().use { it.readText() }
-            return if (html.contains("tgme_page_title")) Res(TAKEN) else Res(FREE)
         } catch (e: Exception) {
-            return Res(ERROR)
-        } finally {
-            c?.disconnect()
+            statusView.text = "Не удалось создать варианты"
+            toast(e.message ?: "Ошибка чтения конфигурации или словаря")
         }
     }
 }

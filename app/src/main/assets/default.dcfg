@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "profileName": "telegram_fragment_mixed",
+  "theme": {
+    "background": "#171A1F",
+    "panel": "#1F232A",
+    "panelAlt": "#262C35",
+    "text": "#F2F5F9",
+    "muted": "#A5B0C2",
+    "accent": "#76A9FF",
+    "success": "#4ADE80",
+    "danger": "#F87171"
+  },
+  "domains": [
+    {
+      "id": "telegram",
+      "enabled": true,
+      "urlTemplate": "https://t.me/{name}",
+      "responseType": "html",
+      "takenSignal": "tgme_page_title",
+      "retryHeader": "Retry-After",
+      "timeoutMs": 10000,
+      "unknownWhenSignalMissing": false,
+      "notFoundMeansAvailable": true
+    },
+    {
+      "id": "fragment",
+      "enabled": true,
+      "urlTemplate": "https://fragment.com/{name}",
+      "responseType": "html",
+      "takenSignal": "",
+      "retryHeader": "Retry-After",
+      "timeoutMs": 10000,
+      "unknownWhenSignalMissing": true,
+      "notFoundMeansAvailable": false
+    }
+  ],
+  "search": {
+    "minLength": 5,
+    "maxLength": 32,
+    "allowDigits": true,
+    "allowUnderscore": true,
+    "pauseMsBase": 800,
+    "pauseMsMax": 12000,
+    "retryBackoffMs": 1000,
+    "limitWaitSecondsMax": 60,
+    "dedupe": true
+  },
+  "generator": {
+    "mode": "mixed",
+    "useDictionary": true,
+    "dictionaryFile": "words.txt",
+    "patternOrder": ["c", "v", "c", "v", "c", "v", "c"],
+    "vowels": "aeiouy",
+    "consonants": "bcdfghjklmnpqrstvwxyz",
+    "preferredStarts": ["a", "b", "c", "d", "m", "s", "t", "v", "x"],
+    "preferredEnds": ["a", "e", "i", "o", "y"],
+    "prefixWords": ["alpha", "night", "orbit", "vibe", "storm", "pixel", "fusion"],
+    "suffixWords": ["labs", "core", "net", "hub", "fx", "io", "ly", "ai"]
+  },
+  "scoring": {
+    "lengthTargetMin": 8,
+    "lengthTargetMax": 12,
+    "highValueCharacters": ["x", "y", "k", "v", "z", "r", "q"],
+    "penaltyForRepeats": 2,
+    "bonusForMemorability": 3,
+    "bonusForBrandish": 2,
+    "bonusForCipherStyle": 2,
+    "minAcceptScore": 25
+  }
+}
