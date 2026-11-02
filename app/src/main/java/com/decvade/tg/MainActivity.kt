@@ -51,6 +51,8 @@ class MainActivity : Activity() {
     private lateinit var prefixInput: EditText
     private lateinit var lenInput: EditText
     private lateinit var lettersOnly: CheckBox
+    private lateinit var dictBox: CheckBox
+    private val doneWords = HashSet<String>()
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
@@ -135,6 +137,11 @@ class MainActivity : Activity() {
         lettersOnly.setTextColor(Color.WHITE)
         lettersOnly.isChecked = true
         root.addView(lettersOnly)
+        dictBox = CheckBox(this)
+        dictBox.text = "По словам из словаря (words.txt)"
+        dictBox.setTextColor(Color.WHITE)
+        dictBox.isChecked = true
+        root.addView(dictBox)
         startBtn = button("Старт")
         root.addView(startBtn)
         statusView = label("", 14f)
@@ -204,9 +211,29 @@ class MainActivity : Activity() {
         val typed = lenInput.text.toString().trim().toIntOrNull()
         val len = if (typed == null) 0 else typed.coerceIn(5, 32)
         val letters = lettersOnly.isChecked
+        var dict: List<String>? = null
+        if (dictBox.isChecked) {
+            val all = try {
+                assets.open("words.txt").bufferedReader().readLines()
+            } catch (e: Exception) {
+                emptyList<String>()
+            }
+            val p = prefix.lowercase()
+            val list = all.map { it.trim().lowercase() }
+                .filter { isValid(it) && it.startsWith(p) && !doneWords.contains(it) }
+                .filter { len == 0 || it.length == len }
+                .filter { !letters || it.all { c -> c.isLetter() } }
+                .distinct().shuffled()
+            if (list.isEmpty()) {
+                toast("Подходящих слов не найдено")
+                return
+            }
+            dict = list
+        }
+        val d = dict
         running = true
         startBtn.text = "Стоп"
-        Thread { runSearch(prefix, len, letters) }.start()
+        Thread { runSearch(prefix, len, letters, d) }.start()
     }
 
     private fun setStatus(t: String) {
@@ -220,17 +247,22 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun runSearch(prefix: String, len: Int, letters: Boolean) {
+    private fun runSearch(prefix: String, len: Int, letters: Boolean, dict: List<String>?) {
+        val queue = ArrayDeque<String>(dict ?: emptyList())
         var checked = 0
         var freeCount = 0
         var fails = 0
-        var pause = 2500L
+        var pause = 800L
 
         while (running) {
-            val l = maxOf(if (len == 0) 5 + rnd.nextInt(4) else len, prefix.length + 1, 5)
-            val name = candidate(prefix, minOf(l, 32), letters)
+            val name: String? = if (dict != null) {
+                queue.removeFirstOrNull()
+            } else {
+                val l = maxOf(if (len == 0) 5 + rnd.nextInt(4) else len, prefix.length + 1, 5)
+                candidate(prefix, minOf(l, 32), letters)
+            }
             if (name == null) {
-                setStatus("Варианты закончились. Проверено: $checked, свободных: $freeCount")
+                setStatus("Слова или варианты закончились. Проверено: $checked, свободных: $freeCount")
                 break
             }
             setStatus("Проверено: $checked, свободных: $freeCount\nСейчас: @$name")
@@ -238,7 +270,7 @@ class MainActivity : Activity() {
 
             if (r.kind == LIMIT || r.kind == ERROR) {
                 // этот ник не проверили, вернём его в очередь
-                seen.remove(name)
+                if (dict != null) queue.addFirst(name) else seen.remove(name)
                 fails++
                 if (r.kind == LIMIT) pause = minOf(pause + 1000L, 10000L)
                 val wait = if (r.waitSec > 0) r.waitSec else minOf(300, 10 * (1 shl minOf(fails, 5)))
@@ -253,6 +285,7 @@ class MainActivity : Activity() {
 
             fails = 0
             checked++
+            if (dict != null) doneWords.add(name)
             if (r.kind == FREE) {
                 freeCount++
                 ui.post {
@@ -260,7 +293,7 @@ class MainActivity : Activity() {
                     adapter.notifyDataSetChanged()
                 }
             }
-            pause = maxOf(2500L, pause - 200L)
+            pause = maxOf(800L, pause - 100L)
             sleepMs(pause)
         }
 
