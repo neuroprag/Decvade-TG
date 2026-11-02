@@ -6,6 +6,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -63,20 +64,39 @@ class MainActivity : Activity() {
         return v
     }
 
+    private fun rounded(color: Int, r: Int): GradientDrawable {
+        val g = GradientDrawable()
+        g.setColor(color)
+        g.cornerRadius = dp(r).toFloat()
+        return g
+    }
+
+    private fun lp(top: Int = 8): LinearLayout.LayoutParams {
+        val p = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        p.topMargin = dp(top)
+        return p
+    }
+
     private fun input(h: String): EditText {
         val v = EditText(this)
         v.hint = h
         v.setHintTextColor(Color.GRAY)
         v.setTextColor(Color.WHITE)
         v.setSingleLine(true)
+        v.background = rounded(0xFF1A1A22.toInt(), 14)
+        v.setPadding(dp(16), dp(14), dp(16), dp(14))
+        v.layoutParams = lp()
         return v
     }
 
     private fun button(t: String): Button {
         val v = Button(this)
         v.text = t
+        v.isAllCaps = false
+        v.textSize = 16f
         v.setTextColor(Color.BLACK)
-        v.setBackgroundColor(Color.WHITE)
+        v.background = rounded(Color.WHITE, 14)
+        v.layoutParams = lp(10)
         return v
     }
 
@@ -92,7 +112,7 @@ class MainActivity : Activity() {
         root.setBackgroundColor(Color.BLACK)
         root.setPadding(dp(16), dp(24), dp(16), dp(16))
 
-        root.addView(label("Decvade - TG", 24f, true))
+        root.addView(label("Decvade - TG", 28f, true))
 
         // Проверка одного ника
         root.addView(label("Проверить ник", 16f, true))
@@ -107,9 +127,8 @@ class MainActivity : Activity() {
         root.addView(label("Автопоиск свободных", 16f, true))
         prefixInput = input("Начало ника (необязательно)")
         root.addView(prefixInput)
-        lenInput = input("Длина ника (5-32)")
+        lenInput = input("Длина (необязательно, 5-32)")
         lenInput.inputType = InputType.TYPE_CLASS_NUMBER
-        lenInput.setText("5")
         root.addView(lenInput)
         lettersOnly = CheckBox(this)
         lettersOnly.text = "Только буквы"
@@ -125,6 +144,9 @@ class MainActivity : Activity() {
         val list = ListView(this)
         adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, found)
         list.adapter = adapter
+        list.background = rounded(0xFF14141A.toInt(), 16)
+        list.divider = null
+        list.setPadding(dp(8), dp(8), dp(8), dp(8))
         list.setOnItemClickListener { _, _, pos, _ ->
             val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             cm.setPrimaryClip(ClipData.newPlainText("username", "@" + found[pos]))
@@ -171,19 +193,16 @@ class MainActivity : Activity() {
 
     private fun startSearch() {
         val prefix = prefixInput.text.toString().trim().removePrefix("@")
-        val len = lenInput.text.toString().trim().toIntOrNull() ?: 5
-        if (len < 5 || len > 32) {
-            toast("Длина должна быть от 5 до 32")
-            return
-        }
-        if (prefix.length >= len) {
-            toast("Начало должно быть короче длины")
+        if (prefix.length >= 32) {
+            toast("Начало слишком длинное")
             return
         }
         if (prefix.isNotEmpty() && !PREFIX_OK.matches(prefix)) {
             toast("В начале только латиница, цифры и _, первая буква")
             return
         }
+        val typed = lenInput.text.toString().trim().toIntOrNull()
+        val len = if (typed == null) 0 else typed.coerceIn(5, 32)
         val letters = lettersOnly.isChecked
         running = true
         startBtn.text = "Стоп"
@@ -208,7 +227,8 @@ class MainActivity : Activity() {
         var pause = 2500L
 
         while (running) {
-            val name = candidate(prefix, len, letters)
+            val l = maxOf(if (len == 0) 5 + rnd.nextInt(4) else len, prefix.length + 1, 5)
+            val name = candidate(prefix, minOf(l, 32), letters)
             if (name == null) {
                 setStatus("Варианты закончились. Проверено: $checked, свободных: $freeCount")
                 break
